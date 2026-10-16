@@ -35,10 +35,15 @@ async def create_task(task: TaskCreate, db: AsyncSession = Depends(get_db)):
     await db.refresh(db_task)
     return db_task
 
-# 2. Listar Tareas (READ - List)
+# 2. Listar Tareas (READ - List). Oculta las tareas archivadas.
 @app.get("/tasks/", response_model=list[TaskResponse])
 async def read_tasks(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(TaskModel).offset(skip).limit(limit))
+    result = await db.execute(
+        select(TaskModel)
+        .where(TaskModel.archived.is_(False))
+        .offset(skip)
+        .limit(limit)
+    )
     tasks = result.scalars().all()
     return list(tasks)
 
@@ -58,11 +63,11 @@ async def update_task(task_id: int, task_data: TaskCreate, db: AsyncSession = De
     task = result.scalars().first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
-    
+
     task.title = task_data.title
     task.description = task_data.description
     task.completed = task_data.completed
-    
+
     await db.commit()
     await db.refresh(task)
     return task
@@ -74,7 +79,41 @@ async def delete_task(task_id: int, db: AsyncSession = Depends(get_db)):
     task = result.scalars().first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
-    
+
     await db.delete(task)
     await db.commit()
     return None
+
+# 6. Marcar una Tarea como terminada
+@app.patch("/tasks/{task_id}/complete", response_model=TaskResponse)
+async def complete_task(task_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(TaskModel).where(TaskModel.id == task_id))
+    task = result.scalars().first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
+
+    task.completed = True
+
+    await db.commit()
+    await db.refresh(task)
+    return task
+
+# 7. Archivar una Tarea (solo si ya está terminada)
+@app.patch("/tasks/{task_id}/archive", response_model=TaskResponse)
+async def archive_task(task_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(TaskModel).where(TaskModel.id == task_id))
+    task = result.scalars().first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
+
+    if not task.completed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se pueden archivar tareas terminadas",
+        )
+
+    task.archived = True
+
+    await db.commit()
+    await db.refresh(task)
+    return task
